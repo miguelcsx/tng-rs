@@ -5,8 +5,13 @@ use crate::{
     trajectory::{BlockType, Trajectory},
 };
 use std::path::Path;
+use zerocopy::IntoBytes;
 
+/// Number of particles in the benchmark workload.
+pub const N_PARTICLES: i64 = 100_000;
 const NATOMS: usize = 100_000;
+/// Number of frames in the benchmark workload.
+pub const N_FRAMES: i64 = 20;
 const NFRAMES: usize = 20;
 const CHUNKY: usize = 10;
 const SCALE: f64 = 0.5;
@@ -82,8 +87,8 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
 
         traj.frame_set_with_time_new(first_frame, frames_in_chunk as i64, time)?;
 
-        let pos_bytes = raw_f64_bytes(&positions[start..end]);
-        traj.particle_data_block_add_owned(
+        let pos_bytes = positions[start..end].as_bytes();
+        traj.particle_data_block_add(
             BlockID::TrajPositions,
             "POSITIONS",
             DataType::Double,
@@ -94,11 +99,11 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
             0,
             NATOMS as i64,
             Compression::TNG,
-            pos_bytes,
+            Some(pos_bytes),
         )?;
 
-        let vel_bytes = raw_f64_bytes(&velocities[start..end]);
-        traj.particle_data_block_add_owned(
+        let vel_bytes = velocities[start..end].as_bytes();
+        traj.particle_data_block_add(
             BlockID::TrajVelocities,
             "VELOCITIES",
             DataType::Double,
@@ -109,7 +114,7 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
             0,
             NATOMS as i64,
             Compression::TNG,
-            vel_bytes,
+            Some(vel_bytes),
         )?;
 
         traj.frame_set_write(false)?;
@@ -117,14 +122,6 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
 
     traj.trajectory_destroy()?;
     Ok(std::fs::metadata(path)?.len())
-}
-
-fn raw_f64_bytes(values: &[f64]) -> Vec<u8> {
-    // Match the C benchmark's malloc + memcpy chunk conversion instead of rebuilding bytes value by value.
-    unsafe {
-        std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
-            .to_vec()
-    }
 }
 
 // --- data generation helpers ---

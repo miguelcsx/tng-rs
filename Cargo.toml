@@ -49,6 +49,11 @@ name = "compress"
 harness = false
 required-features = ["bench"]
 
+[[bench]]
+name = "read"
+harness = false
+required-features = ["bench"]
+
 [lints.clippy]
 assigning_clones = "warn"
 single_match_else = "warn"
