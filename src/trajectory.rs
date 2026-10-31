@@ -41,9 +41,6 @@ use flate2::write::ZlibEncoder;
 
 const USE_HASH: bool = true;
 
-/// Upper bound on how many mismatching block ids are retained for diagnostics.
-const MAX_RECORDED_MISMATCHES: usize = 16;
-
 /// A numeric type a data block can be decoded into.
 ///
 /// Implementations are the single authoritative place deciding which [`DataType`]s are
@@ -448,8 +445,6 @@ pub struct Trajectory {
     hash_mismatch_count: u64,
     /// Ids of the first few blocks whose stored MD5 hash did not match their contents.
     mismatched_block_ids: Vec<BlockID>,
-    /// Trajectory-frame-set position of the first hash mismatch (for diagnostics).
-    first_hash_mismatch_frame_set_pos: i64,
     /// Whether the current frame set's blocks have been scanned in from the file.
     ///
     /// The particle-mapping blocks of a frame set are needed to translate local to real particle
@@ -580,7 +575,6 @@ impl Trajectory {
 
             hash_mismatch_count: 0,
             mismatched_block_ids: Vec::new(),
-            first_hash_mismatch_frame_set_pos: -1,
             frame_set_blocks_scanned: false,
         }
     }
@@ -607,28 +601,29 @@ impl Trajectory {
     /// (`tng_io.c`), so rejecting the file here would refuse trajectories that the C library and
     /// GROMACS read happily, such as unfinished or hand-edited ones. Callers that want to act on
     /// corruption can inspect [`Self::hash_mismatch_count`].
+    ///
+    /// A block is read again for every range read, so the same block would otherwise be counted
+    /// once per read. Every block is therefore only counted once.
     fn record_hash_mismatch(&mut self, block_id: BlockID) {
+        if self.mismatched_block_ids.contains(&block_id) {
+            return;
+        }
+        self.mismatched_block_ids.push(block_id);
         self.hash_mismatch_count += 1;
-        if self.first_hash_mismatch_frame_set_pos < 0 {
-            self.first_hash_mismatch_frame_set_pos =
-                self.current_trajectory_frame_set_input_file_pos;
-        }
-        if self.mismatched_block_ids.len() < MAX_RECORDED_MISMATCHES {
-            self.mismatched_block_ids.push(block_id);
-        }
     }
 
     /// Number of data/frame-set/mapping blocks whose stored MD5 hash did not match their
     /// contents during reading.
     ///
-    /// Reading never fails because of a mismatch (matching the C library, which only warns).
-    /// A non-zero value means the file is likely corrupted or was not fully flushed.
+    /// Every block is counted once, no matter how often it is read. Reading never fails because
+    /// of a mismatch (matching the C library, which only warns). A non-zero value means the file
+    /// is likely corrupted or was not fully flushed.
     pub fn hash_mismatch_count(&self) -> u64 {
         self.hash_mismatch_count
     }
 
-    /// Ids of up to `MAX_RECORDED_MISMATCHES` blocks whose stored MD5 hash did not match
-    /// their contents, in the order they were encountered.
+    /// Ids of the blocks whose stored MD5 hash did not match their contents, in the order they
+    /// were encountered. Every block is listed once.
     pub fn mismatched_block_ids(&self) -> &[BlockID] {
         &self.mismatched_block_ids
     }
