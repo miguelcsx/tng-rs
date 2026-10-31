@@ -5549,7 +5549,7 @@ impl Trajectory {
         // The mapping only depends on the particle index, not on the frame, so it is resolved
         // once for the whole block instead of once per (frame, particle) pair.
         let frame_set = &self.current_trajectory_frame_set;
-        let real_particles: Result<Vec<usize>, TngError> = (0..n_particles_usize)
+        let real_particles: Vec<usize> = (0..n_particles_usize)
             .map(|j| {
                 let j_i64 = i64::try_from(j).expect("particle index to i64");
                 // The C library keeps the local numbering when no mapping block covers a
@@ -5558,24 +5558,35 @@ impl Trajectory {
                 let real = self
                     .particle_mapping_get_real_particle(frame_set, j_i64)
                     .unwrap_or(j_i64);
-                if real < 0 || real >= n_particles {
-                    return Err(TngError::Constraint(format!(
-                        "particle mapping maps local particle {j_i64} to real particle {real}, \
-                         which is outside the block's particle count ({n_particles})"
-                    )));
-                }
-                Ok(usize::try_from(real).expect("validated real particle index"))
+                usize::try_from(real.max(0)).unwrap_or(j_i64.unsigned_abs() as usize)
             })
             .collect();
-        let real_particles = real_particles?;
 
-        let mut numeric_values = vec![T::default(); elem_count];
+        // The real particle numbers are the indices in the molecule, which can be outside the
+        // frame set's particle count when the number of atoms varies between frame sets. The
+        // destination is as wide as the largest real particle number, so that the mapping fits
+        // without writing outside the buffer.
+        let width = real_particles
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |real| real.saturating_add(1))
+            .max(n_particles_usize);
+        let dest_elem_count = n_stored_frames
+            .checked_mul(n_values_per_frame)
+            .and_then(|len| len.checked_mul(width))
+            .ok_or_else(|| {
+                TngError::Constraint("mapped data block dimensions overflow the address space".into())
+            })?;
+
+        let mut numeric_values = vec![T::default(); dest_elem_count];
         let byte_per_particle = n_values_per_frame * size;
         for i in 0..n_stored_frames {
             let frame_offset = i * n_particles_usize;
+            let dest_offset = i * width;
             for (j, real) in real_particles.iter().enumerate() {
                 let src = (frame_offset + j) * byte_per_particle;
-                let dst = (frame_offset + real) * n_values_per_frame;
+                let dst = (dest_offset + real) * n_values_per_frame;
                 for k in 0..n_values_per_frame {
                     let value_src = src + k * size;
                     numeric_values[dst + k] =
@@ -5586,7 +5597,7 @@ impl Trajectory {
 
         Ok((
             n_frames,
-            n_particles,
+            i64::try_from(width).expect("particle count to i64"),
             i64::try_from(n_values_per_frame).expect("values per frame to i64"),
             data_type,
             numeric_values,
