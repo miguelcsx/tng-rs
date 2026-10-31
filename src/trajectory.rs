@@ -5571,9 +5571,7 @@ impl Trajectory {
         let byte_per_particle = n_values_per_frame * size;
         for i in 0..n_stored_frames {
             let frame_offset = i * n_particles_usize;
-            for j in 0..n_particles_usize {
-                let real = real_particles[j];
-
+            for (j, real) in real_particles.iter().enumerate() {
                 let src = (frame_offset + j) * byte_per_particle;
                 let dst = (frame_offset + real) * n_values_per_frame;
                 for k in 0..n_values_per_frame {
