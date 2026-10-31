@@ -8,11 +8,9 @@ use std::path::Path;
 use zerocopy::IntoBytes;
 
 /// Number of particles in the benchmark workload.
-pub const N_PARTICLES: i64 = 100_000;
-const NATOMS: usize = 100_000;
+pub const N_PARTICLES: usize = 100_000;
 /// Number of frames in the benchmark workload.
-pub const N_FRAMES: i64 = 20;
-const NFRAMES: usize = 20;
+pub const N_FRAMES: usize = 20;
 const CHUNKY: usize = 10;
 const SCALE: f64 = 0.5;
 const PRECISION: f64 = 1e-8;
@@ -37,13 +35,13 @@ const INTSINTABLE: [i32; 128] = [
 
 /// Generate benchmark position and velocity data.
 pub fn bench_data() -> (Vec<f64>, Vec<f64>) {
-    let frame_len = NATOMS * 3;
-    let mut positions = vec![0.0; NFRAMES * frame_len];
-    let mut velocities = vec![0.0; NFRAMES * frame_len];
+    let frame_len = N_PARTICLES * 3;
+    let mut positions = vec![0.0; N_FRAMES * frame_len];
+    let mut velocities = vec![0.0; N_FRAMES * frame_len];
     let mut intbox = vec![0; frame_len];
     let mut intvelbox = vec![0; frame_len];
 
-    for frame in 0..NFRAMES {
+    for frame in 0..N_FRAMES {
         genibox(&mut intbox, frame as i32);
         genivelbox(&mut intvelbox, frame as i32);
 
@@ -58,8 +56,8 @@ pub fn bench_data() -> (Vec<f64>, Vec<f64>) {
 
 /// Write benchmark data to a TNG file. Returns file size in bytes.
 pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result<u64, TngError> {
-    let frame_len = NATOMS * 3;
-    let expected_len = NFRAMES * frame_len;
+    let frame_len = N_PARTICLES * 3;
+    let expected_len = N_FRAMES * frame_len;
     assert_eq!(positions.len(), expected_len);
     assert_eq!(velocities.len(), expected_len);
 
@@ -74,12 +72,12 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
     let chain_idx = traj.add_chain(molecule_idx, "A");
     let residue_idx = traj.chain_residue_add(molecule_idx, chain_idx, "PAR");
     traj.residue_atom_add(molecule_idx, residue_idx, "P", "P");
-    traj.molecule_cnt_set(molecule_idx, NATOMS as i64);
+    traj.molecule_cnt_set(molecule_idx, N_PARTICLES as i64);
 
     traj.file_headers_write(false)?;
 
-    for frame_start in (0..NFRAMES).step_by(CHUNKY) {
-        let frames_in_chunk = (NFRAMES - frame_start).min(CHUNKY);
+    for frame_start in (0..N_FRAMES).step_by(CHUNKY) {
+        let frames_in_chunk = (N_FRAMES - frame_start).min(CHUNKY);
         let first_frame = frame_start as i64;
         let time = first_frame as f64 * TIME_PER_FRAME;
         let start = frame_start * frame_len;
@@ -97,7 +95,7 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
             3,
             1,
             0,
-            NATOMS as i64,
+            N_PARTICLES as i64,
             Compression::TNG,
             Some(pos_bytes),
         )?;
@@ -112,7 +110,7 @@ pub fn bench_write(path: &Path, positions: &[f64], velocities: &[f64]) -> Result
             3,
             1,
             0,
-            NATOMS as i64,
+            N_PARTICLES as i64,
             Compression::TNG,
             Some(vel_bytes),
         )?;
@@ -194,8 +192,8 @@ fn genibox(intbox: &mut [i32], iframe: i32) {
     let mut flip = false;
     let mut i = 0usize;
 
-    while i < NATOMS {
-        let this_mol_length = molecule_length.min(NATOMS - i);
+    while i < N_PARTICLES {
+        let this_mol_length = molecule_length.min(N_PARTICLES - i);
 
         if i.is_multiple_of(10) {
             intbox[i * 3] = molpos[0];
@@ -259,7 +257,7 @@ fn genibox(intbox: &mut [i32], iframe: i32) {
 }
 
 fn genivelbox(intvelbox: &mut [i32], iframe: i32) {
-    for i in 0..NATOMS {
+    for i in 0..N_PARTICLES {
         let idx = i as i32;
         intvelbox[i * 3] = (intsin((idx + iframe) * 3) / 10) * VELINTMUL + idx;
         intvelbox[i * 3 + 1] = 1 + (intcos((idx + iframe) * 5) / 10) * VELINTMUL + idx;
@@ -269,7 +267,7 @@ fn genivelbox(intvelbox: &mut [i32], iframe: i32) {
 }
 
 fn realbox(intbox: &[i32], out: &mut [f64]) {
-    for i in 0..NATOMS {
+    for i in 0..N_PARTICLES {
         for j in 0..3 {
             out[i * 3 + j] = f64::from(intbox[i * 3 + j]) * PRECISION * SCALE;
         }
