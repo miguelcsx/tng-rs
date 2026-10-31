@@ -5524,27 +5524,36 @@ impl Trajectory {
 
         // Mapping case: decode each stored particle value directly into its destination slot
         // rather than materialising a reordered `u8` buffer.
+        //
+        // The mapping only depends on the particle index, not on the frame, so it is resolved
+        // once for the whole block instead of once per (frame, particle) pair.
         let frame_set = &self.current_trajectory_frame_set;
-        let mut numeric_values = vec![T::default(); elem_count];
-        let byte_per_particle = n_values_per_frame * size;
-        for i in 0..n_stored_frames {
-            let frame_offset = i * n_particles_usize;
-            for j in 0..n_particles_usize {
+        let real_particles: Result<Vec<usize>, TngError> = (0..n_particles_usize)
+            .map(|j| {
                 let j_i64 = i64::try_from(j).expect("particle index to i64");
+                // The C library keeps the local numbering when no mapping block covers a
+                // particle (`tng_particle_mapping_get_real_particle` sets `*real = local`
+                // and reports the failure, which the caller ignores).
                 let real = self
                     .particle_mapping_get_real_particle(frame_set, j_i64)
-                    .ok_or_else(|| {
-                        TngError::Constraint(format!(
-                            "no particle mapping found for particle {j_i64}"
-                        ))
-                    })?;
+                    .unwrap_or(j_i64);
                 if real < 0 || real >= n_particles {
                     return Err(TngError::Constraint(format!(
                         "particle mapping maps local particle {j_i64} to real particle {real}, \
                          which is outside the block's particle count ({n_particles})"
                     )));
                 }
-                let real = usize::try_from(real).expect("validated real particle index");
+                Ok(usize::try_from(real).expect("validated real particle index"))
+            })
+            .collect();
+        let real_particles = real_particles?;
+
+        let mut numeric_values = vec![T::default(); elem_count];
+        let byte_per_particle = n_values_per_frame * size;
+        for i in 0..n_stored_frames {
+            let frame_offset = i * n_particles_usize;
+            for j in 0..n_particles_usize {
+                let real = real_particles[j];
 
                 let src = (frame_offset + j) * byte_per_particle;
                 let dst = (frame_offset + real) * n_values_per_frame;
