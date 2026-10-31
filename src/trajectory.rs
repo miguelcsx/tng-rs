@@ -450,6 +450,13 @@ pub struct Trajectory {
     mismatched_block_ids: Vec<BlockID>,
     /// Trajectory-frame-set position of the first hash mismatch (for diagnostics).
     first_hash_mismatch_frame_set_pos: i64,
+    /// Whether the current frame set's blocks have been scanned in from the file.
+    ///
+    /// The particle-mapping blocks of a frame set are needed to translate local to real particle
+    /// numbering, and they are dropped whenever a frame set is read. This flag records whether
+    /// they have been loaded again since then, so a range read does not have to re-read (and
+    /// re-decompress) the frame set's blocks for every single frame.
+    frame_set_blocks_scanned: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -574,6 +581,7 @@ impl Trajectory {
             hash_mismatch_count: 0,
             mismatched_block_ids: Vec::new(),
             first_hash_mismatch_frame_set_pos: -1,
+            frame_set_blocks_scanned: false,
         }
     }
 
@@ -1062,6 +1070,9 @@ impl Trajectory {
             i64::try_from(file_pos).expect("u64 to i64");
 
         self.frame_set_particle_mapping_free();
+        // The mappings of the frame set are gone, so its blocks have to be scanned in again
+        // before a range read can translate particle numbering.
+        self.frame_set_blocks_scanned = false;
 
         let mut hasher = if hash_mode { Some(Md5::new()) } else { None };
 
@@ -5013,12 +5024,20 @@ impl Trajectory {
             self.frame_set_of_frame_find(start_frame_nr)?;
         }
 
-        // Re-read the current frame set's data block *and* its particle-mapping blocks.
+        // The frame set's data block *and* its particle-mapping blocks are read from the file.
         // The mapping blocks are required to translate local to real particle numbering and are
-        // not loaded by the narrow "only this data block" reader, so the frame set's block list
-        // is rebuilt here. This mirrors the scan the C library performs when the requested block
-        // is not found yet.
-        self.rescan_current_frame_set_blocks(USE_HASH, block_id)?;
+        // not loaded by the narrow "only this data block" reader.
+        //
+        // The frame set's blocks are cached, so they are only scanned in again when the current
+        // frame set has not been scanned yet (its mappings are dropped whenever a frame set is
+        // read) or when the requested block is not loaded. The C library re-reads the requested
+        // block on every call; caching it avoids re-reading and re-decompressing the same
+        // payload for every frame of a per-frame loop.
+        if !self.frame_set_blocks_scanned
+            || self.data_block_ref(block_id, is_particle_data).is_none()
+        {
+            self.rescan_current_frame_set_blocks(USE_HASH, block_id)?;
+        }
 
         // Copy the scalar metadata out and drop the borrow: `gen_data_vector_get_as`
         // mutates `self` while re-reading frame sets.
@@ -5588,6 +5607,11 @@ impl Trajectory {
     /// be known by reading them, so they must be picked up even when the requested data block
     /// is already loaded. Mappings are cleared first so repeated calls do not accumulate
     /// duplicates.
+    ///
+    /// The data blocks themselves are not dropped: a block that is read again replaces the entry
+    /// it already has in the frame set, so sibling blocks stay available. A missing block is an
+    /// error, matching the C library, which fails the read when the requested block is not part
+    /// of the current frame set.
     fn rescan_current_frame_set_blocks(
         &mut self,
         hash_mode: bool,
@@ -5625,11 +5649,9 @@ impl Trajectory {
             ))?;
 
         self.frame_set_particle_mapping_free();
-        self.current_trajectory_frame_set.tr_data.clear();
-        self.current_trajectory_frame_set.tr_particle_data.clear();
-        self.current_trajectory_frame_set.n_data_blocks = 0;
-        self.current_trajectory_frame_set.n_particle_data_blocks = 0;
+        self.frame_set_blocks_scanned = false;
 
+        let mut found_data_block = false;
         let mut file_pos = self.get_input_file_position();
         let input_file_len = self.input_file_len;
         self.block_header_read(&mut block)?;
@@ -5638,6 +5660,9 @@ impl Trajectory {
             && block.id != BlockID::Unknown
         {
             if block.id == block_id || block.id == BlockID::ParticleMapping {
+                if block.id == block_id {
+                    found_data_block = true;
+                }
                 self.block_read_next(&mut block, hash_mode)?;
             } else {
                 self.input_file
@@ -5660,6 +5685,19 @@ impl Trajectory {
                 .expect("init input_file")
                 .seek(SeekFrom::Start(file_pos))?;
         }
+
+        if !found_data_block {
+            return Err(TngError::NotFound(format!(
+                "data block {block_id:?} is not part of the current frame set \
+                 (frames {}..={})",
+                self.current_trajectory_frame_set.first_frame,
+                self.current_trajectory_frame_set.first_frame
+                    + self.current_trajectory_frame_set.n_frames
+                    - 1
+            )));
+        }
+
+        self.frame_set_blocks_scanned = true;
         Ok(())
     }
 
