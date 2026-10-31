@@ -73,11 +73,22 @@ trait NumericValue: Copy + Default {
                 values.len()
             )));
         }
-        Ok(values
-            .chunks_exact(size)
-            .map(|chunk| Self::decode_value(data_type, chunk))
-            .collect())
+        // Dispatch on the data type once, outside the per-value loop, so the inner
+        // loop is a plain conversion the compiler can vectorise.
+        match data_type {
+            DataType::Int => Ok(Self::decode_i64(values)),
+            DataType::Float => Ok(Self::decode_f32(values)),
+            DataType::Double => Ok(Self::decode_f64(values)),
+            DataType::Char => Err(Self::reject_data_type(data_type)),
+        }
     }
+
+    /// Decode `i64` payloads into `Self`.
+    fn decode_i64(values: &[u8]) -> Vec<Self>;
+    /// Decode `f32` payloads into `Self`.
+    fn decode_f32(values: &[u8]) -> Vec<Self>;
+    /// Decode `f64` payloads into `Self`.
+    fn decode_f64(values: &[u8]) -> Vec<Self>;
 
     /// Whether `Self` can represent values of `data_type`.
     fn accepts(data_type: DataType) -> bool;
@@ -105,6 +116,27 @@ impl NumericValue for f64 {
             DataType::Char => unreachable!("rejected by accepts"),
         }
     }
+
+    fn decode_i64(values: &[u8]) -> Vec<f64> {
+        let (chunks, _) = values.as_chunks::<8>();
+        chunks
+            .iter()
+            .map(|array| i64::from_ne_bytes(*array) as f64)
+            .collect()
+    }
+
+    fn decode_f32(values: &[u8]) -> Vec<f64> {
+        let (chunks, _) = values.as_chunks::<4>();
+        chunks
+            .iter()
+            .map(|array| f64::from(f32::from_ne_bytes(*array)))
+            .collect()
+    }
+
+    fn decode_f64(values: &[u8]) -> Vec<f64> {
+        let (chunks, _) = values.as_chunks::<8>();
+        chunks.iter().map(|array| f64::from_ne_bytes(*array)).collect()
+    }
 }
 
 impl NumericValue for f32 {
@@ -121,6 +153,22 @@ impl NumericValue for f32 {
             DataType::Float => f32::from_ne_bytes(chunk.try_into().expect("chunk is 4 bytes")),
             _ => unreachable!("rejected by accepts"),
         }
+    }
+
+    fn decode_i64(_values: &[u8]) -> Vec<f32> {
+        unreachable!("f32 accepts only Float blocks")
+    }
+
+    fn decode_f32(values: &[u8]) -> Vec<f32> {
+        let (chunks, _) = values.as_chunks::<4>();
+        chunks
+            .iter()
+            .map(|array| f32::from_ne_bytes(*array))
+            .collect()
+    }
+
+    fn decode_f64(_values: &[u8]) -> Vec<f32> {
+        unreachable!("f32 accepts only Float blocks")
     }
 }
 
