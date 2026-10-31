@@ -2,6 +2,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tempfile::TempDir;
 use tng_rs::data::{Compression, DataType};
 use tng_rs::gen_block::BlockID;
 use tng_rs::trajectory::{BlockType, Trajectory};
@@ -11,24 +12,27 @@ use tng_rs::{N_FRAMES, N_PARTICLES};
 ///
 /// [`tng_rs::bench_write`] stores `Double` positions, which the `Float`-only readers reject,
 /// so the same data is written as `Float` here.
-fn write_benchmark_file() -> PathBuf {
-    let path = std::env::temp_dir().join("tng_rs_read_criterion.tng");
+///
+/// The trajectory is written into a temporary directory that is removed when it goes out of
+/// scope, so parallel benchmark runs do not share a file.
+fn write_benchmark_file(dir: &Path) -> PathBuf {
+    let path = dir.join("tng_rs_read_criterion.tng");
     let (positions, _velocities) = tng_rs::bench_data();
 
     let mut trajectory = Trajectory::new();
     trajectory.output_file_set(&path);
     trajectory.compression_precision = 1.0e6;
-    trajectory.frame_set_n_frames = N_FRAMES;
-    trajectory.current_trajectory_frame_set.n_frames = N_FRAMES;
+    trajectory.frame_set_n_frames = N_FRAMES as i64;
+    trajectory.current_trajectory_frame_set.n_frames = N_FRAMES as i64;
     let molecule = trajectory.add_molecule("particle");
     let chain = trajectory.add_chain(molecule, "A");
     let residue = trajectory.chain_residue_add(molecule, chain, "PAR");
     trajectory.residue_atom_add(molecule, residue, "P", "P");
-    trajectory.molecule_cnt_set(molecule, N_PARTICLES);
+    trajectory.molecule_cnt_set(molecule, N_PARTICLES as i64);
     trajectory.file_headers_write(false).expect("write headers");
 
     trajectory
-        .frame_set_with_time_new(0, N_FRAMES, 0.0)
+        .frame_set_with_time_new(0, N_FRAMES as i64, 0.0)
         .expect("create frame set");
 
     let floats: Vec<f32> = positions.iter().map(|value| *value as f32).collect();
@@ -42,11 +46,11 @@ fn write_benchmark_file() -> PathBuf {
             "POSITIONS",
             DataType::Float,
             &BlockType::Trajectory,
-            N_FRAMES,
+            N_FRAMES as i64,
             3,
             1,
             0,
-            N_PARTICLES,
+            N_PARTICLES as i64,
             Compression::TNG,
             Some(&bytes),
         )
@@ -68,8 +72,9 @@ fn open(path: &Path) -> Trajectory {
 /// and workload. The `f32` path returns half as many output bytes and never widens the
 /// `Float` payload to `f64` on the way.
 fn bench_reads(c: &mut Criterion) {
-    let path = write_benchmark_file();
-    let last_frame = N_FRAMES - 1;
+    let dir = TempDir::new().expect("create temporary directory");
+    let path = write_benchmark_file(dir.path());
+    let last_frame = N_FRAMES as i64 - 1;
 
     c.bench_function("read_positions_f64", |b| {
         b.iter_batched(
