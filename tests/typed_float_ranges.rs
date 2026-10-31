@@ -650,6 +650,14 @@ fn corrupt_payload_is_reported_without_aborting() {
 
     assert_eq!(trajectory.hash_mismatch_count(), 1);
     assert_eq!(trajectory.mismatched_block_ids(), [BlockID::TrajPositions]);
+
+    // Reading the same block again must not count it twice: the count is a count of
+    // mismatching blocks, not of read operations.
+    let _ = trajectory
+        .util_pos_read_range_f32(0, 0)
+        .expect("a hash mismatch must not abort the read");
+    assert_eq!(trajectory.hash_mismatch_count(), 1);
+    assert_eq!(trajectory.mismatched_block_ids(), [BlockID::TrajPositions]);
 }
 
 #[test]
