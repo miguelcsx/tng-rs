@@ -5036,7 +5036,7 @@ impl Trajectory {
 
         // Copy the scalar metadata out and drop the borrow: `gen_data_vector_get_as`
         // mutates `self` while re-reading frame sets.
-        let (stride_length, first_frame_with_data) = {
+        let (mut stride_length, first_frame_with_data) = {
             let data = self
                 .data_block_ref(block_id, is_particle_data)
                 .ok_or_else(|| TngError::NotFound(format!("data block {block_id:?} not found")))?;
@@ -5123,6 +5123,13 @@ impl Trajectory {
 
                 let (n_frames, _n_particles, _n_values_per_frame, _data_type, current_values) =
                     self.gen_data_vector_get_as(is_particle_data, block_id)?;
+
+                // The stride belongs to the data block, and frame sets can store their data
+                // with a different stride. Take the stride of the block that was just read,
+                // the way the C library does in `tng_gen_data_vector_get`.
+                if let Some(data) = self.data_block_ref(block_id, is_particle_data) {
+                    stride_length = data.stride_length;
+                }
 
                 let last_frame_pos = (n_frames - 1).min(end_frame_nr - current_frame_pos);
 
