@@ -712,15 +712,50 @@ fn find_block_contents(bytes: &[u8], id: BlockID) -> Option<std::ops::Range<usiz
 }
 
 /// Infer the TNG file endianness from the first block header, mirroring the parser.
+///
+/// A header whose most significant byte is zero and whose least significant byte is non-zero
+/// is little endian; every other pattern is big endian (`Trajectory::block_header_read`). The
+/// big-endian case includes small header sizes, whose most significant byte is legitimately
+/// zero, so it must not be treated as "unknown".
 fn detect_file_little_endian(bytes: &[u8]) -> Option<bool> {
     let header_contents_size = bytes.get(..8)?;
-    if header_contents_size[0] != 0 {
-        if header_contents_size[7] == 0 {
-            Some(true)
-        } else {
-            Some(false)
-        }
-    } else {
-        None
-    }
+    Some(header_contents_size[0] != 0 && header_contents_size[7] == 0)
+}
+
+/// `find_block_contents` must locate a block in a little- *and* a big-endian file.
+///
+/// A real big-endian host is required to *write* such a file, so this builds the two-byte-order
+/// encodings by hand: the layout is the same on every host, only the integer byte order differs,
+/// and the parser reaches the same conclusion from the same first header.
+#[test]
+fn find_block_contents_handles_both_byte_orders() {
+    const HEADER: u64 = 0x48;
+    const CONTENTS: u64 = 0x10;
+
+    let mut little = Vec::new();
+    little.extend_from_slice(&HEADER.to_le_bytes());
+    little.extend_from_slice(&CONTENTS.to_le_bytes());
+    little.extend_from_slice(&(BlockID::TrajPositions as u64).to_le_bytes());
+    little.resize(HEADER as usize, 0);
+    little.extend_from_slice(&[0xAB; CONTENTS as usize]);
+
+    let mut big = Vec::new();
+    big.extend_from_slice(&HEADER.to_be_bytes());
+    big.extend_from_slice(&CONTENTS.to_be_bytes());
+    big.extend_from_slice(&(BlockID::TrajPositions as u64).to_be_bytes());
+    big.resize(HEADER as usize, 0);
+    big.extend_from_slice(&[0xCD; CONTENTS as usize]);
+
+    let expected = HEADER as usize..(HEADER + CONTENTS) as usize;
+    assert_eq!(
+        find_block_contents(&little, BlockID::TrajPositions),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        find_block_contents(&big, BlockID::TrajPositions),
+        Some(expected)
+    );
+
+    // A header that is absent must not be reported as found.
+    assert_eq!(find_block_contents(&big, BlockID::TrajVelocities), None);
 }
