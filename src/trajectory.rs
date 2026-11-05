@@ -132,7 +132,10 @@ impl NumericValue for f64 {
 
     fn decode_f64(values: &[u8]) -> Vec<f64> {
         let (chunks, _) = values.as_chunks::<8>();
-        chunks.iter().map(|array| f64::from_ne_bytes(*array)).collect()
+        chunks
+            .iter()
+            .map(|array| f64::from_ne_bytes(*array))
+            .collect()
     }
 }
 
@@ -5576,7 +5579,9 @@ impl Trajectory {
             .checked_mul(n_values_per_frame)
             .and_then(|len| len.checked_mul(width))
             .ok_or_else(|| {
-                TngError::Constraint("mapped data block dimensions overflow the address space".into())
+                TngError::Constraint(
+                    "mapped data block dimensions overflow the address space".into(),
+                )
             })?;
 
         let mut numeric_values = vec![T::default(); dest_elem_count];
