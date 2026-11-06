@@ -607,7 +607,14 @@ fn legacy_f64_readers_match_known_values() {
 
 #[test]
 fn corrupt_payload_is_reported_without_aborting() {
-    let spec = Spec::new();
+    // Two frame sets: re-reading frame set 0 after frame set 1 forces the block to be loaded
+    // from the file a second time, which is the only way the "count every block once" rule in
+    // `record_hash_mismatch` is actually exercised. With a single frame set the block stays
+    // cached and the second read never re-reads it, so the assertion below would hold trivially.
+    let spec = Spec {
+        frame_sets: 2,
+        ..Spec::new()
+    };
     let (_directory, path) = write_trajectory("corrupt-payload", &spec);
 
     // Locate the *positions* payload structurally: the four-byte length of the block contents
@@ -651,8 +658,12 @@ fn corrupt_payload_is_reported_without_aborting() {
     assert_eq!(trajectory.hash_mismatch_count(), 1);
     assert_eq!(trajectory.mismatched_block_ids(), [BlockID::TrajPositions]);
 
-    // Reading the same block again must not count it twice: the count is a count of
-    // mismatching blocks, not of read operations.
+    // Switch to frame set 1 and back. Re-reading frame set 0 reloads the corrupted block from
+    // the file, so without the dedupe in `record_hash_mismatch` the count would climb to 2 and
+    // the id list would hold a second entry.
+    let _ = trajectory
+        .util_pos_read_range_f32(1, 1)
+        .expect("a hash mismatch must not abort the read");
     let _ = trajectory
         .util_pos_read_range_f32(0, 0)
         .expect("a hash mismatch must not abort the read");
