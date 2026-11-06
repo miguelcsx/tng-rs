@@ -721,6 +721,41 @@ fn int_blocks_decode_through_the_generic_reader() {
     );
 }
 
+/// `particle_data_get` decodes through `NumericValue::decode`, so it is the public entry point
+/// that exercises the `Int` arm of the dispatch (`decode_i64`).
+///
+/// `particle_data_interval_get` uses `interval_bytes_to_f64` instead, so covering it does *not*
+/// reach that arm. This pins the vector path, including the `f64` widening of stored `i64`
+/// values, and the error a `f32` read of the same block must produce.
+#[test]
+fn int_blocks_decode_through_the_vector_reader() {
+    let spec = Spec {
+        positions_type: DataType::Int,
+        ..Spec::new()
+    };
+    let (_directory, path) = write_trajectory("int-vector", &spec);
+    let mut trajectory = open_trajectory(&path);
+    // `particle_data_get` reads from the last read frame set.
+    trajectory
+        .frame_set_read_next(true)
+        .expect("read frame set");
+
+    let (values, n_frames, n_particles, n_values_per_frame, data_type) = trajectory
+        .particle_data_get(BlockID::TrajPositions)
+        .expect("an Int block must decode through the vector reader");
+    assert_eq!(n_frames, 1);
+    assert_eq!(n_particles, PARTICLES);
+    assert_eq!(n_values_per_frame, VALUES_PER_FRAME);
+    assert_eq!(data_type, DataType::Int);
+
+    // The payload stores `value as i64`, so the expected values truncate first.
+    let expected: Vec<f64> = expected_particle_values(&spec, 0.0, 0, 0)
+        .into_iter()
+        .map(|value| f64::from(value as i64 as f32))
+        .collect();
+    assert_eq!(values, expected);
+}
+
 /// Walk the TNG block headers and return the byte range of the contents of `id`.
 ///
 /// The general block header is `header_contents_size` (`u64`, so it covers the whole header),

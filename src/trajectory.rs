@@ -1898,21 +1898,17 @@ impl Trajectory {
                     .position(|block| block.block_id == id)
                     .map(DataBlockIndex::NonTrajectory)
             }
-        } else if is_traj_block {
-            assert_eq!(frame_set.n_data_blocks, frame_set.tr_data.len());
-            if let Some(index) = frame_set
-                .tr_data
-                .iter()
-                .position(|block| block.block_id == id)
-            {
-                return Some(DataBlockIndex::TrajectoryFrameSet(index));
-            }
-            assert_eq!(self.n_data_blocks, self.non_tr_data.len());
-            self.non_tr_data
-                .iter()
-                .position(|block| block.block_id == id)
-                .map(DataBlockIndex::NonTrajectory)
         } else {
+            if is_traj_block {
+                assert_eq!(frame_set.n_data_blocks, frame_set.tr_data.len());
+                if let Some(index) = frame_set
+                    .tr_data
+                    .iter()
+                    .position(|block| block.block_id == id)
+                {
+                    return Some(DataBlockIndex::TrajectoryFrameSet(index));
+                }
+            }
             assert_eq!(self.n_data_blocks, self.non_tr_data.len());
             self.non_tr_data
                 .iter()
