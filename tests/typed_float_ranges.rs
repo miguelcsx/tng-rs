@@ -756,6 +756,61 @@ fn int_blocks_decode_through_the_vector_reader() {
     assert_eq!(values, expected);
 }
 
+/// The block metadata getters must resolve blocks that were written into a frame set.
+///
+/// They have three lookup layers (non-trajectory vectors, then `data_block_ref`, then a
+/// re-scan), and nothing covered them: `data_block_name_get`,
+/// `data_block_dependency_get` and `data_block_num_values_per_frame_get` had no callers.
+#[test]
+fn block_metadata_getters_resolve_written_blocks() {
+    let spec = Spec::new();
+    let (_directory, path) = write_trajectory("metadata-getters", &spec);
+    let mut trajectory = open_trajectory(&path);
+    trajectory
+        .frame_set_read_next(true)
+        .expect("read frame set");
+
+    assert_eq!(
+        trajectory
+            .data_block_name_get(BlockID::TrajPositions)
+            .expect("positions block name"),
+        "POSITIONS"
+    );
+    assert_eq!(
+        trajectory
+            .data_block_num_values_per_frame_get(BlockID::TrajPositions)
+            .expect("positions values per frame"),
+        VALUES_PER_FRAME
+    );
+
+    // Positions are particle dependent and frame dependent.
+    let dependency = trajectory
+        .data_block_dependency_get(BlockID::TrajPositions)
+        .expect("positions dependency");
+    assert_ne!(dependency, 0, "particle data must be particle dependent");
+
+    // Box shape is written as a non-particle block, so it must resolve too.
+    assert_eq!(
+        trajectory
+            .data_block_name_get(BlockID::TrajBoxShape)
+            .expect("box shape block name"),
+        "BOX SHAPE"
+    );
+    assert_eq!(
+        trajectory
+            .data_block_num_values_per_frame_get(BlockID::TrajBoxShape)
+            .expect("box shape values per frame"),
+        BOX_VALUES
+    );
+    assert_eq!(
+        trajectory
+            .data_block_dependency_get(BlockID::TrajBoxShape)
+            .expect("box shape dependency"),
+        1,
+        "box shape is frame dependent but not particle dependent"
+    );
+}
+
 /// Walk the TNG block headers and return the byte range of the contents of `id`.
 ///
 /// The general block header is `header_contents_size` (`u64`, so it covers the whole header),
