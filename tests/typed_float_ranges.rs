@@ -681,6 +681,46 @@ fn intact_trajectory_reports_no_hash_mismatch() {
     assert!(trajectory.mismatched_block_ids().is_empty());
 }
 
+/// `Int` blocks decode through the generic (`f64`) interval reader.
+///
+/// That reader converts each stored value with `interval_bytes_to_f64`, not with
+/// `NumericValue::decode`, so this pins the `Int` conversion of the value-level path. The typed
+/// `f32` readers must keep rejecting the same block with their own message.
+#[test]
+fn int_blocks_decode_through_the_generic_reader() {
+    let spec = Spec {
+        positions_type: DataType::Int,
+        ..Spec::new()
+    };
+    let (_directory, path) = write_trajectory("int-block", &spec);
+    let mut trajectory = open_trajectory(&path);
+
+    let (values, n_frames, n_particles, n_values_per_frame, data_type) = trajectory
+        .particle_data_interval_get(BlockID::TrajPositions, 0, 0, true)
+        .expect("an Int block must decode through the generic reader");
+    assert_eq!(n_frames, 1);
+    assert_eq!(n_particles, PARTICLES);
+    assert_eq!(n_values_per_frame, VALUES_PER_FRAME);
+    assert_eq!(data_type, DataType::Int);
+
+    // `sample_value` is fractional; the payload stores `value as i64`, so the expected values
+    // truncate before being widened back to f64.
+    let expected: Vec<f64> = expected_particle_values(&spec, 0.0, 0, 0)
+        .into_iter()
+        .map(|value| f64::from(value as i64 as f32))
+        .collect();
+    assert_eq!(values, expected);
+
+    // The Float-only typed reader must reject an Int block rather than misreading it.
+    let error = trajectory
+        .util_pos_read_range_f32(0, 0)
+        .expect_err("reading Int data as f32 must fail");
+    assert!(
+        matches!(&error, TngError::Constraint(message) if message.contains("as f32")),
+        "unexpected error: {error:?}"
+    );
+}
+
 /// Walk the TNG block headers and return the byte range of the contents of `id`.
 ///
 /// The general block header is `header_contents_size` (`u64`, so it covers the whole header),
